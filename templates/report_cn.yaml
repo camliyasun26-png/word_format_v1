@@ -1,0 +1,51 @@
+name: report_cn
+h1:
+  font_name: 仿宋_GB2312
+  font_size: 18.0
+  bold: true
+  alignment: CENTER
+  space_before: 0.0
+  space_after: 0.0
+  line_spacing: 1.5
+  indent_first_line: 0.0
+h2:
+  font_name: 仿宋_GB2312
+  font_size: 14.0
+  bold: true
+  alignment: JUSTIFY
+  space_before: 0.0
+  space_after: 0.0
+  line_spacing: 1.5
+  indent_first_line: 24.0
+h3:
+  font_name: 仿宋_GB2312
+  font_size: 12.0
+  bold: true
+  alignment: JUSTIFY
+  space_before: 0.0
+  space_after: 0.0
+  line_spacing: 1.5
+  indent_first_line: 24.0
+h4:
+  font_name: 仿宋_GB2312
+  font_size: 12.0
+  bold: false
+  alignment: JUSTIFY
+  space_before: 0.0
+  space_after: 0.0
+  line_spacing: 1.5
+  indent_first_line: 48.0
+body:
+  font_name: 仿宋_GB2312
+  font_size: 12.0
+  bold: false
+  alignment: JUSTIFY
+  space_before: 0.0
+  space_after: 0.0
+  line_spacing: 1.5
+  indent_first_line: 24.0
+page_margins_cm:
+  top: 2.54
+  bottom: 2.54
+  left: 3.17
+  right: 3.17
