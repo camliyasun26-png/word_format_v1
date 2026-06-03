@@ -4,62 +4,78 @@
 <meta charset="UTF-8">
 <title>Word 格式化工具</title>
 <style>
-  body { font-family: sans-serif; margin: 0; padding: 16px; background: #fafafa; }
-  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
-  .tabs { display: flex; border-bottom: 2px solid #ccc; margin-bottom: 0; }
-  .tab-btn { padding: 8px 20px; cursor: pointer; border: none; background: #f0f0f0; font-size: 14px; }
-  .tab-btn.active { background: #fff; border-bottom: 2px solid #1976d2; font-weight: bold; color: #1976d2; }
-  .tab-panel { display: none; padding: 12px 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #f0f7ff 0%, #e6f0fa 100%); min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #2e5c8a 0%, #1e4a7a 50%, #4a6fa5 100%); color: #fff; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .header-title { font-size: 18px; font-weight: bold; }
+  .header-info { font-size: 12px; opacity: 0.9; }
+  .toolbar { display: flex; gap: 16px; align-items: center; margin: 16px 20px; padding: 16px 20px; background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); }
+  .tabs { display: flex; background: #fff; margin: 0 20px; padding: 0 12px; border-radius: 8px 8px 0 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+  .tab-btn { padding: 12px 24px; cursor: pointer; border: none; background: transparent; font-size: 14px; color: #666; transition: all 0.3s ease; border-radius: 8px 8px 0 0; }
+  .tab-btn:hover { background: #e8f0fe; color: #2e5c8a; }
+  .tab-btn.active { background: linear-gradient(135deg, #2e5c8a 0%, #4a8ac4 100%); color: #fff; font-weight: 500; box-shadow: 0 -2px 8px rgba(46,92,138,0.3); }
+  .tab-panel { display: none; margin: 0 20px 20px; padding: 20px; background: #fff; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .tab-panel.active { display: block; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { background: #f5f5f5; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-  tr.low { background: #ffe0e0; }
-  tr.medium { background: #fff8e1; }
-  select { font-size: 13px; padding: 2px; }
+  th { background: linear-gradient(135deg, #2e5c8a 0%, #4a8ac4 100%); color: #fff; font-weight: 500; text-align: left; }
+  th, td { border: 1px solid #e0e7f0; padding: 10px 12px; }
+  tr:hover { background: #f8fcff; }
+  tr.low { background: #fff0f0; }
+  tr.medium { background: #fffbf0; }
+  select { font-size: 13px; padding: 6px 10px; border: 1px solid #d0d7e0; border-radius: 4px; background: #fff; }
   .page-wrap {
-    background: #e0e0e0; padding: 24px 0; overflow: auto;
+    background: linear-gradient(135deg, #eef4fa 0%, #f4f8fc 100%); padding: 24px 0; overflow: auto;
     display: flex; justify-content: center;
   }
   #preview-frame, #original-frame {
     width: 21cm; min-height: 29.7cm; box-sizing: border-box;
     padding: 2.54cm 3.17cm;
     background: #fff;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    border-radius: 4px;
   }
   #original-frame img, #preview-frame img { max-width: 100%; height: auto; }
-  .tab2-layout { display: flex; gap: 12px; align-items: flex-start; }
+  .tab2-layout { display: flex; gap: 16px; align-items: flex-start; }
   #orig-nav, #prev-nav {
-    width: 260px; flex-shrink: 0; max-height: calc(100vh - 160px);
-    overflow: auto; background: #fff; border: 1px solid #ddd;
-    border-radius: 4px; padding: 8px 4px; font-size: 13px;
-    position: sticky; top: 8px;
+    width: 260px; flex-shrink: 0; max-height: calc(100vh - 220px);
+    overflow: auto; background: #fff; border: 1px solid #e0e7f0;
+    border-radius: 8px; padding: 12px; font-size: 13px;
+    position: sticky; top: 16px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
   }
-  #orig-nav .nav-title, #prev-nav .nav-title { font-weight: bold; padding: 4px 8px; color: #555; border-bottom: 1px solid #eee; margin-bottom: 4px; }
+  #orig-nav .nav-title, #prev-nav .nav-title { font-weight: 600; padding: 8px 10px; color: #2e5c8a; border-bottom: 2px solid #e8f0fe; margin-bottom: 8px; font-size: 14px; }
   #orig-nav .nav-item, #prev-nav .nav-item {
-    cursor: pointer; padding: 3px 8px; border-radius: 3px;
+    cursor: pointer; padding: 6px 10px; border-radius: 4px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: all 0.2s ease;
   }
-  #orig-nav .nav-item:hover, #prev-nav .nav-item:hover { background: #e3f2fd; color: #1976d2; }
-  #orig-nav .nav-item.lvl-H1, #prev-nav .nav-item.lvl-H1 { font-weight: bold; padding-left: 8px; }
-  #orig-nav .nav-item.lvl-H2, #prev-nav .nav-item.lvl-H2 { padding-left: 20px; }
-  #orig-nav .nav-item.lvl-H3, #prev-nav .nav-item.lvl-H3 { padding-left: 32px; }
-  #orig-nav .nav-item.lvl-H4, #prev-nav .nav-item.lvl-H4 { padding-left: 44px; color: #666; }
-  #orig-nav .nav-item.lvl-H5, #prev-nav .nav-item.lvl-H5 { padding-left: 56px; color: #888; }
-  #orig-nav .nav-empty, #prev-nav .nav-empty { color: #999; padding: 8px; }
-  .tab2-layout .page-wrap { flex: 1; }
-  .btn { padding: 8px 18px; background: #1976d2; color: #fff; border: none; cursor: pointer; border-radius: 4px; font-size: 14px; }
-  .btn:disabled { background: #aaa; cursor: default; }
-  .btn.danger { background: #d32f2f; }
-  #status { font-size: 13px; color: #555; }
-  label { font-size: 14px; }
-  .preview-note { color: #d32f2f; font-size: 12px; margin: 4px 0; font-weight: bold; }
+  #orig-nav .nav-item:hover, #prev-nav .nav-item:hover { background: linear-gradient(135deg, #e8f0fe 0%, #d4e4f7 100%); color: #2e5c8a; }
+  #orig-nav .nav-item.lvl-H1, #prev-nav .nav-item.lvl-H1 { font-weight: bold; padding-left: 10px; color: #2e5c8a; }
+  #orig-nav .nav-item.lvl-H2, #prev-nav .nav-item.lvl-H2 { padding-left: 24px; color: #3d6b9e; }
+  #orig-nav .nav-item.lvl-H3, #prev-nav .nav-item.lvl-H3 { padding-left: 38px; color: #4d7bae; }
+  #orig-nav .nav-item.lvl-H4, #prev-nav .nav-item.lvl-H4 { padding-left: 52px; color: #5d8bbf; }
+  #orig-nav .nav-item.lvl-H5, #prev-nav .nav-item.lvl-H5 { padding-left: 66px; color: #6d9bc0; }
+  #orig-nav .nav-empty, #prev-nav .nav-empty { color: #999; padding: 12px 10px; text-align: center; }
+  .tab2-layout .page-wrap { flex: 1; border-radius: 8px; }
+  .btn { padding: 10px 24px; background: linear-gradient(135deg, #2e5c8a 0%, #4a8ac4 100%); color: #fff; border: none; cursor: pointer; border-radius: 6px; font-size: 14px; font-weight: 500; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(46,92,138,0.3); }
+  .btn:hover:not(:disabled) { background: linear-gradient(135deg, #1e4a7a 0%, #3a7ab4 100%); box-shadow: 0 4px 8px rgba(46,92,138,0.4); transform: translateY(-1px); }
+  .btn:disabled { background: #b8c4d0; cursor: default; box-shadow: none; }
+  .btn.danger { background: linear-gradient(135deg, #c44569 0%, #e65c7a 100%); box-shadow: 0 2px 4px rgba(196,69,105,0.3); }
+  .btn.danger:hover:not(:disabled) { background: linear-gradient(135deg, #a43559 0%, #c64c6a 100%); box-shadow: 0 4px 8px rgba(196,69,105,0.4); }
+  #status { font-size: 13px; color: #666; }
+  label { font-size: 14px; color: #333; font-weight: 500; }
+  .preview-note { color: #c44569; font-size: 12px; margin: 4px 0; font-weight: bold; }
   .placeholder-row { text-align: center; margin: 10px 0; }
-  .media-placeholder { display: inline-block; background: #e3f2fd; border: 1px solid #1976d2; color: #1976d2; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
-  .media-placeholder:hover { background: #bbdefb; }
+  .media-placeholder { display: inline-block; background: linear-gradient(135deg, #e8f0fe 0%, #d4e4f7 100%); border: 1px solid #4a8ac4; color: #2e5c8a; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.3s ease; }
+  .media-placeholder:hover { background: linear-gradient(135deg, #d4e4f7 0%, #bdd4e7 100%); border-color: #2e5c8a; }
+  input[type="file"] { border: 1px solid #d0d7e0; border-radius: 4px; padding: 4px; background: #fff; }
 </style>
 </head>
 <body>
+
+<div class="header">
+  <div class="header-title">Word 格式化工具</div>
+  <div class="header-info">文档格式规范化处理平台</div>
+</div>
 
 <div class="toolbar">
   <label>文件：<input type="file" id="file-input" accept=".doc,.docx"></label>
