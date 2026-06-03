@@ -2,9 +2,9 @@
 
 输入格式混乱的 Word 文档（`.doc` / `.docx`），自动识别段落层级，经人工少量核验后，套用预设格式模板，输出整洁规范的文档。
 ![项目演示图片](./image/demo.png)
-##直接可跳转网页链接：https://word-format-v1.onrender.com/
+## 直接可跳转网页链接：https://word-format-v1.onrender.com/
 ---
-#下面给出本地运行方法
+# 下面给出本地运行方法
 
 ### 环境要求
 
