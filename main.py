@@ -286,10 +286,30 @@ _OMML_SYM_MAP = {
 }
 
 def _omml_text_to_latex(text: str) -> str:
-    """将 OMML <m:t> 文本中的特殊字符映射到 LaTeX。"""
+    """将 OMML <m:t> 文本中的特殊字符映射到 LaTeX。
+    中文字符/中文标点用 \\text{} 包裹，避免 KaTeX unicodeTextInMathMode 警告。
+    """
     result = []
+    cjk_buf = []
+
+    def flush_cjk():
+        if cjk_buf:
+            result.append(r"\text{" + "".join(cjk_buf) + "}")
+            cjk_buf.clear()
+
     for ch in text:
-        result.append(_OMML_SYM_MAP.get(ch, ch))
+        mapped = _OMML_SYM_MAP.get(ch)
+        if mapped is not None:
+            flush_cjk()
+            result.append(mapped)
+        elif "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or \
+             "\uff00" <= ch <= "\uffef" or "\u2000" <= ch <= "\u206f":
+            # CJK 统一汉字、CJK 符号标点、全角字符、常用标点
+            cjk_buf.append(ch)
+        else:
+            flush_cjk()
+            result.append(ch)
+    flush_cjk()
     return "".join(result)
 
 def _needs_braces(s: str) -> str:
