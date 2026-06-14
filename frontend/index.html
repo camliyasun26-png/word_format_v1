@@ -80,7 +80,7 @@
 
 <div class="toolbar">
   <label>文件：<input type="file" id="file-input" accept=".doc,.docx"></label>
-  <label>模板：<select id="template-select"></select></label>
+  <label>模板：<select id="template-select" style="min-width:180px"><option value="" disabled selected>加载中...</option></select></label>
   <button class="btn" id="upload-btn">上传解析</button>
   <button class="btn" id="export-btn" disabled>确认输出</button>
   <span id="status"></span>
@@ -175,7 +175,9 @@ async function loadTemplates() {
     await loadTemplateData();
   } catch (e) {
     console.error("loadTemplates failed:", e);
-    setStatus("模板列表加载失败: " + e.message);
+    const sel = document.getElementById("template-select");
+    sel.innerHTML = '<option value="" disabled selected>加载失败 - 请确认服务器已启动</option>';
+    setStatus("⚠ 模板列表加载失败，请确认通过 http://localhost:端口 访问，而非直接打开文件");
   }
 }
 
