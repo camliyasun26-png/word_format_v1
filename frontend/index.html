@@ -433,7 +433,7 @@ function buildPreviewNav() {
   const nav = document.getElementById("prev-nav");
   if (!nav) return;
   const headings = paragraphs
-    .map((p, i) => ({ p, i }))
+    .map((p, i) => ({ p, i: p.index != null ? p.index : i }))
     .filter(x => x.p.detected_level && x.p.detected_level !== "Body" && x.p.detected_level !== "Equation");
   const deepest = headings.reduce((m, x) => {
     const n = parseInt(x.p.detected_level.slice(1));
@@ -505,6 +505,7 @@ function buildOriginalNav() {
   if (!frame) return;
   let count = 0;
   paragraphs.forEach((p, i) => {
+    const paraIdx = p.index != null ? p.index : i;
     const lvl = p.detected_level;
     if (!lvl || lvl === "Body" || lvl === "Equation") return;
     const text = (p.original_text || "").trim();
@@ -516,7 +517,7 @@ function buildOriginalNav() {
     styleNavItem(item, lvl);
     item.addEventListener("click", () => {
       // 直接用 data-para-idx 精确定位，避免文本匹配误跳到目录页
-      const target = frame.querySelector(`[data-para-idx="${i}"]`);
+      const target = frame.querySelector(`[data-para-idx="${paraIdx}"]`);
       if (!target) return;
       target.scrollIntoView({ behavior: "smooth", block: "start" });
       const prev = target.style.background;
