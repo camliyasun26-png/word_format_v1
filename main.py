@@ -609,16 +609,38 @@ def _build_original_html(docx_bytes: bytes) -> str:
         W_BODY = f"{{{W_NS}}}body"
         W_P    = f"{{{W_NS}}}p"
         W_TBL  = f"{{{W_NS}}}tbl"
+        W_R    = f"{{{W_NS}}}r"
+        W_T    = f"{{{W_NS}}}t"
+        W_DRAW = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
         try:
             with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
                 with zf.open("word/document.xml") as xf:
                     xml_tree = ET.parse(xf)
             body_el = xml_tree.getroot().find(W_BODY)
-            body_seq = [
-                "p" if c.tag == W_P else "tbl"
-                for c in body_el
-                if c.tag in (W_P, W_TBL)
-            ]
+
+            def _p_has_content(p_el) -> bool:
+                """判断 w:p 是否有实际内容（mammoth 会输出 <p>）"""
+                # 含图片
+                if p_el.find(f".//{W_DRAW}inline") is not None or \
+                   p_el.find(f".//{W_DRAW}anchor") is not None:
+                    return True
+                # 含文本
+                for t in p_el.iter(W_T):
+                    if (t.text or "").strip():
+                        return True
+                return False
+
+            # body_seq: list of ("p_content"|"p_empty"|"tbl", xml_para_idx)
+            # xml_para_idx 只对 p 计数（与 doc.paragraphs 对齐）
+            body_seq = []
+            xml_para_idx = 0
+            for c in body_el:
+                if c.tag == W_P:
+                    kind = "p_content" if _p_has_content(c) else "p_empty"
+                    body_seq.append((kind, xml_para_idx))
+                    xml_para_idx += 1
+                elif c.tag == W_TBL:
+                    body_seq.append(("tbl", -1))
         except Exception:
             body_seq = []
 
@@ -632,30 +654,36 @@ def _build_original_html(docx_bytes: bytes) -> str:
                 r'(<p[^>]*>.*?</p>|<table\b[^>]*>.*?</table>)',
                 html_str, flags=re.DOTALL
             )
-            # 找出 parts 中每个块的索引
+            # 找出 parts 中每个块的索引（mammoth 实际输出的 <p> 和 <table>）
             block_part_indices = [
-                i for i, s in enumerate(parts)
+                idx for idx, s in enumerate(parts)
                 if re.match(r'<p\b|<table\b', s)
             ]
 
-            # p 的计数器（para_idx 只计 w:p，不计 w:tbl）
-            para_idx = 0
-            for seq_idx, block_type in enumerate(body_seq):
-                if seq_idx >= len(block_part_indices):
+            # 遍历 body_seq，p_content/tbl 消耗 block_part_indices，
+            # p_empty 不消耗（mammoth 跳过），但 para_idx 始终递增
+            html_block_cursor = 0
+            for kind, xml_para_idx in body_seq:
+                if kind == "p_empty":
+                    # mammoth 没有输出这个空段落，para_idx 递增但不修改 HTML
+                    # xml_para_idx 已经是正确的段落索引
+                    continue
+                if html_block_cursor >= len(block_part_indices):
                     break
-                pi = block_part_indices[seq_idx]
+                pi = block_part_indices[html_block_cursor]
+                html_block_cursor += 1
 
-                if block_type == "p":
+                if kind == "p_content":
                     p_html = parts[pi]
-                    # 在 <p 后注入 data-para-idx
+                    # 注入 data-para-idx = xml_para_idx（与 doc.paragraphs 索引对齐）
                     p_html = re.sub(
                         r'^(<p\b)',
-                        rf'\1 data-para-idx="{para_idx}"',
+                        rf'\1 data-para-idx="{xml_para_idx}"',
                         p_html
                     )
                     # 注入公式（如果该段有公式）
-                    if para_idx in eq_map:
-                        formula = eq_map[para_idx]
+                    if xml_para_idx in eq_map:
+                        formula = eq_map[xml_para_idx]
                         eq_span = (
                             f' <span class="katex-formula" data-latex="{html_lib.escape(formula)}"'
                             f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
@@ -663,7 +691,7 @@ def _build_original_html(docx_bytes: bytes) -> str:
                         )
                         p_html = p_html[:-4] + eq_span + "</p>"
                     parts[pi] = p_html
-                    para_idx += 1
+                # tbl: 不注入 data-para-idx，直接跳过
 
             html_str = "".join(parts)
 
