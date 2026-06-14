@@ -674,6 +674,14 @@ def _parse_docx(docx_path: str) -> list[dict]:
         result["is_formula"] = i in equation_map
         result["formula_text"] = equation_map.get(i, None)
 
+        # 目录页段落（toc 1/2/3 样式）强制归为 Body，不进入导航
+        try:
+            style_name = (para.style.name or "").lower()
+        except Exception:
+            style_name = ""
+        if style_name.startswith("toc") or "目录" in style_name:
+            result["detected_level"] = "Body"
+
         if i in equation_map:
             formula = equation_map[i]
             existing_text = result.get("original_text", "").strip()
@@ -881,59 +889,71 @@ def _build_styled_html(docx_bytes: bytes, template_name: str) -> str:
                 para_idx += 1
                 continue
 
-            result = classify_paragraph(para, ctx)
-            level = result.get("detected_level", "Body")
-            text  = result.get("original_text", "") or ""
+            try:
+                result = classify_paragraph(para, ctx)
+                level = result.get("detected_level", "Body")
+                text  = result.get("original_text", "") or ""
 
-            if level not in ("Body", "Equation"):
-                ctx.push(level, text[:20])
+                # 目录页段落（toc 1/2/3 样式）强制归为 Body，不进入导航
+                try:
+                    style_name = (para.style.name or "").lower()
+                except Exception:
+                    style_name = ""
+                if style_name.startswith("toc") or "目录" in style_name:
+                    level = "Body"
 
-            # 公式处理
-            if para_idx in eq_map:
-                formula = eq_map[para_idx]
-                if not text.strip():
-                    level = "Equation"
-                    text  = formula
+                if level not in ("Body", "Equation"):
+                    ctx.push(level, text[:20])
 
-            # 检查段落是否含图片（<wp:inline> or <wp:anchor>）
-            has_image = child.find(f".//{_WP_DRAW}inline") is not None or \
-                        child.find(f".//{_WP_DRAW}anchor") is not None
-
-            if has_image and img_idx < len(img_tags):
-                # 含图片的段落：插入 <img>，不改图片样式
-                img_html = img_tags[img_idx]
-                img_idx += 1
-                eq_span = ""
+                # 公式处理
                 if para_idx in eq_map:
                     formula = eq_map[para_idx]
-                    escaped = html_lib.escape(formula)
-                    eq_span = (
-                        f' <span class="katex-formula" data-latex="{escaped}"'
-                        f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
-                        f'\\({escaped}\\)</span>'
-                    )
-                parts_html.append(
-                    f'<p data-para-idx="{para_idx}" style="text-align:center;margin:4px 0">'
-                    f'{img_html}{eq_span}</p>'
-                )
-            else:
-                # 普通段落：应用模板样式
-                p_html = render_paragraph_html(text, level, tpl)
-                # 注入 data-para-idx
-                p_html = re.sub(r'^(<p\b)', rf'\1 data-para-idx="{para_idx}"', p_html)
+                    if not text.strip():
+                        level = "Equation"
+                        text  = formula
 
-                # 如果有公式且段落非纯公式段，在末尾追加公式 span
-                if para_idx in eq_map and level != "Equation":
-                    formula = eq_map[para_idx]
-                    escaped = html_lib.escape(formula)
-                    eq_span = (
-                        f' <span class="katex-formula" data-latex="{escaped}"'
-                        f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
-                        f'\\({escaped}\\)</span>'
-                    )
-                    p_html = p_html[:-4] + eq_span + "</p>"
+                # 检查段落是否含图片（<wp:inline> or <wp:anchor>）
+                has_image = child.find(f".//{_WP_DRAW}inline") is not None or \
+                            child.find(f".//{_WP_DRAW}anchor") is not None
 
-                parts_html.append(p_html)
+                if has_image and img_idx < len(img_tags):
+                    # 含图片的段落：插入 <img>，不改图片样式
+                    img_html = img_tags[img_idx]
+                    img_idx += 1
+                    eq_span = ""
+                    if para_idx in eq_map:
+                        formula = eq_map[para_idx]
+                        escaped = html_lib.escape(formula)
+                        eq_span = (
+                            f' <span class="katex-formula" data-latex="{escaped}"'
+                            f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
+                            f'\\({escaped}\\)</span>'
+                        )
+                    parts_html.append(
+                        f'<p data-para-idx="{para_idx}" style="text-align:center;margin:4px 0">'
+                        f'{img_html}{eq_span}</p>'
+                    )
+                else:
+                    # 普通段落：应用模板样式
+                    p_html = render_paragraph_html(text, level, tpl)
+                    # 注入 data-para-idx
+                    p_html = re.sub(r'^(<p\b)', rf'\1 data-para-idx="{para_idx}"', p_html)
+
+                    # 如果有公式且段落非纯公式段，在末尾追加公式 span
+                    if para_idx in eq_map and level != "Equation":
+                        formula = eq_map[para_idx]
+                        escaped = html_lib.escape(formula)
+                        eq_span = (
+                            f' <span class="katex-formula" data-latex="{escaped}"'
+                            f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
+                            f'\\({escaped}\\)</span>'
+                        )
+                        p_html = p_html[:-4] + eq_span + "</p>"
+
+                    parts_html.append(p_html)
+            except Exception:
+                # 单段落渲染失败不影响整体
+                parts_html.append(f'<p data-para-idx="{para_idx}" style="color:#999"></p>')
 
             para_idx += 1
 
@@ -961,7 +981,12 @@ def preview_full_html(doc_id: str = Form(...), template: str = Form("report_cn.y
         meta = json.load(f)
     with open(meta["docx_path"], "rb") as f:
         docx_bytes = f.read()
-    styled_html = _build_styled_html(docx_bytes, template)
+    try:
+        styled_html = _build_styled_html(docx_bytes, template)
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"渲染失败: {exc}\n{tb}")
     return {"html": styled_html}
 
 
