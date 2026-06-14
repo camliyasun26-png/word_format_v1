@@ -507,16 +507,21 @@ def _apply_paragraph_format_by_keyword(doc: Document, keyword: str, config: dict
 
 
 def _apply_equation_format(doc: Document, config: dict):
-    """应用数学公式格式"""
+    """应用数学公式格式（支持 WPS 公式）"""
     font_name = config.get("font_name", "Times New Roman")
     font_size = Pt(config.get("font_size", 10.5))
     alignment = _ALIGNMENT_MAP.get(config.get("alignment", "RIGHT"), WD_ALIGN_PARAGRAPH.RIGHT)
     
-    # 识别公式段落（包含等号且较短的段落）
+    math_ns = 'http://schemas.openxmlformats.org/officeDocument/2006/math'
+    
     for para in doc.paragraphs:
         text = para.text.strip()
-        # 简单启发式：包含"="且不是太长的行可能是公式
-        if "=" in text and len(text) < 200 and not para.paragraph_format.left_indent:
+        
+        # 检查段落是否包含 MathML 公式（WPS 公式）
+        has_math = para._element.find('.//{' + math_ns + '}oMath') is not None
+        
+        # 识别公式段落：包含 MathML 公式 或 包含等号且较短的段落
+        if has_math or ("=" in text and len(text) < 200 and not para.paragraph_format.left_indent):
             para.alignment = alignment
             for run in para.runs:
                 run.font.size = font_size

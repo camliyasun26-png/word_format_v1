@@ -228,25 +228,79 @@ async def _start_cleanup() -> None:
     asyncio.create_task(_cleanup_loop())
 
 
+def _extract_equations_from_docx(docx_bytes: bytes) -> list[tuple[int, str]]:
+    """从 DOCX 中提取公式及其位置（支持 WPS 公式）"""
+    equations = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+            if "word/document.xml" not in zf.namelist():
+                return equations
+            with zf.open("word/document.xml") as f:
+                tree = ET.parse(f)
+        
+        ns = {
+            'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+            'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math'
+        }
+        
+        para_idx = -1
+        for p in tree.findall('.//w:p', ns):
+            para_idx += 1
+            math_text = []
+            for omath in p.findall('.//m:oMath', ns):
+                for t in omath.findall('.//m:t', ns):
+                    if t.text:
+                        math_text.append(t.text)
+            if math_text:
+                equations.append((para_idx, ' '.join(math_text)))
+    except Exception:
+        pass
+    return equations
+
+
 def _build_original_html(docx_bytes: bytes) -> str:
     style_map = """
-p[style-name='Heading 1'] => h1:fresh
-p[style-name='Heading 2'] => h2:fresh
-"""
-    result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=style_map)
-    widths = _extract_image_widths_cm(docx_bytes)
-    html = _inject_image_widths(result.value, widths)
-    anchors = _extract_media_anchors(docx_bytes)
-    return _inject_media_ids(html, anchors)
+    p[style-name='Heading 1'] => h1:fresh
+    p[style-name='Heading 2'] => h2:fresh
+    """
+    try:
+        result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=style_map)
+        html = result.value
+        
+        # 提取并插入公式
+        equations = _extract_equations_from_docx(docx_bytes)
+        for para_idx, formula in equations:
+            # 在空段落位置插入公式
+            formula_html = f'<p class="formula" style="text-align: right; font-family: Times New Roman; font-size: 10.5pt;">{formula}</p>'
+            html = html.replace('<p></p>', formula_html, 1)
+        
+        widths = _extract_image_widths_cm(docx_bytes)
+        html = _inject_image_widths(html, widths)
+        anchors = _extract_media_anchors(docx_bytes)
+        return _inject_media_ids(html, anchors)
+    except Exception as e:
+        import logging
+        logging.error(f"Mammoth conversion error: {e}")
+        return "<p>文档预览生成失败</p>"
 
 
 def _parse_docx(docx_path: str) -> list[dict]:
     doc = Document(docx_path)
     ctx = ChapterContext()
     paragraphs = []
+    
+    # 提取公式信息
+    with open(docx_path, 'rb') as f:
+        docx_bytes = f.read()
+    equations = _extract_equations_from_docx(docx_bytes)
+    equation_map = {idx: formula for idx, formula in equations}
+    
     for i, para in enumerate(doc.paragraphs):
         result = classify_paragraph(para, ctx)
         result["index"] = i
+        result["is_formula"] = i in equation_map
+        result["formula_text"] = equation_map.get(i, None)
+        
         if result["detected_level"] != "Body":
             ctx.push(result["detected_level"], para.text[:20])
         paragraphs.append(result)
