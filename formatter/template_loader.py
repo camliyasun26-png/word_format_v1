@@ -7,4 +7,6 @@ def load_template(path: str) -> dict:
         return yaml.safe_load(f)
 
 def list_templates(directory: str) -> list[str]:
-    return [f for f in os.listdir(directory) if f.endswith(".yaml")]
+    if not os.path.isdir(directory):
+        return []
+    return sorted(f for f in os.listdir(directory) if f.endswith(".yaml"))

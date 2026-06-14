@@ -19,6 +19,7 @@ def _max_preset_level(template: dict) -> str:
 
 
 def render_paragraph_html(text: str, level: str, template: dict) -> str:
+    text = text or ""
     # 处理公式级别
     if level == "Equation":
         eq_config = template.get("equation", {})

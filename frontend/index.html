@@ -159,26 +159,37 @@ function styleNavItem(item, level) {
 }
 
 async function loadTemplates() {
-  const resp = await fetch("/templates");
-  const list = await resp.json();
-  const sel = document.getElementById("template-select");
-  sel.innerHTML = "";
-  list.forEach(t => {
-    const opt = document.createElement("option");
-    opt.value = t; opt.textContent = t;
-    if (t === "report_cn.yaml") opt.selected = true;
-    sel.appendChild(opt);
-  });
-  if (list.length > 0) currentTemplate = sel.value;
-  await loadTemplateData();
+  try {
+    const resp = await fetch("/templates");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const list = await resp.json();
+    const sel = document.getElementById("template-select");
+    sel.innerHTML = "";
+    list.forEach(t => {
+      const opt = document.createElement("option");
+      opt.value = t; opt.textContent = t.replace(/\.yaml$/i, "");
+      if (t === "report_cn.yaml") opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (list.length > 0) currentTemplate = sel.value;
+    await loadTemplateData();
+  } catch (e) {
+    console.error("loadTemplates failed:", e);
+    setStatus("模板列表加载失败: " + e.message);
+  }
 }
 
 document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", async () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById(btn.dataset.tab).classList.add("active");
+    // 切换到格式化预览 tab 时，若预览内容为空则触发渲染
+    if (btn.dataset.tab === "tab3" && paragraphs.length > 0) {
+      const frame = document.getElementById("preview-frame");
+      if (!frame.innerHTML.trim()) await refreshPreview();
+    }
   });
 });
 
@@ -325,15 +336,16 @@ function annotateMediaNotes(rootId) {
 }
 
 async function refreshPreview() {
+  if (!paragraphs.length) return;
   try {
     const items = [];
     const plan = paragraphs.map(p => {
       if (p.is_split && p.split_title && p.split_body) {
-        const a = items.push({ text: p.split_title, level: p.detected_level }) - 1;
-        const b = items.push({ text: p.split_body, level: "Body" }) - 1;
+        const a = items.push({ text: p.split_title || "", level: p.detected_level || "Body" }) - 1;
+        const b = items.push({ text: p.split_body || "", level: "Body" }) - 1;
         return { kind: "split", a, b };
       }
-      const a = items.push({ text: p.original_text, level: p.detected_level }) - 1;
+      const a = items.push({ text: p.original_text || "", level: p.detected_level || "Body" }) - 1;
       return { kind: "single", a };
     });
     const resp = await fetch("/preview/batch", {
@@ -341,12 +353,15 @@ async function refreshPreview() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items, template: currentTemplate })
     });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => resp.status);
+      throw new Error("HTTP " + resp.status + ": " + errText);
+    }
     const { htmls } = await resp.json();
     const parts = plan.map((slot, idx) => {
       const inner = slot.kind === "split"
-        ? htmls[slot.a] + "\n" + htmls[slot.b]
-        : htmls[slot.a];
+        ? (htmls[slot.a] || "") + "\n" + (htmls[slot.b] || "")
+        : (htmls[slot.a] || "");
       return `<div class="para-slot" data-para-idx="${idx}">${inner}</div>`;
     });
     const frame = document.getElementById("preview-frame");
@@ -355,9 +370,9 @@ async function refreshPreview() {
     buildPreviewNav();
   } catch (e) {
     console.error("refreshPreview failed:", e);
-    setStatus("预览渲染失败: " + e.message);
+    setStatus("格式化预览渲染失败: " + e.message);
     document.getElementById("preview-frame").innerHTML =
-      `<div style="color:#d32f2f;padding:16px">预览渲染失败: ${escapeHtml(String(e && e.message || e))}</div>`;
+      `<div style="color:#d32f2f;padding:16px">格式化预览渲染失败: ${escapeHtml(String(e && e.message || e))}</div>`;
   }
 }
 
@@ -401,7 +416,7 @@ function buildPreviewNav() {
   if (!nav) return;
   const headings = paragraphs
     .map((p, i) => ({ p, i }))
-    .filter(x => x.p.detected_level && x.p.detected_level !== "Body");
+    .filter(x => x.p.detected_level && x.p.detected_level !== "Body" && x.p.detected_level !== "Equation");
   const deepest = headings.reduce((m, x) => {
     const n = parseInt(x.p.detected_level.slice(1));
     return isNaN(n) ? m : Math.max(m, n);
@@ -474,7 +489,7 @@ function buildOriginalNav() {
   let count = 0;
   paragraphs.forEach((p, i) => {
     const lvl = p.detected_level;
-    if (!lvl || lvl === "Body") return;
+    if (!lvl || lvl === "Body" || lvl === "Equation") return;
     const text = (p.original_text || "").trim();
     if (!text) return;
     const key = norm(text);

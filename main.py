@@ -172,15 +172,21 @@ def _inject_media_ids(html: str, anchors: list[dict]) -> str:
     return re.sub(r'<(img|table)(?=[\s>])', repl, html, flags=re.I)
 
 
-TEMPLATES_DIR = "templates"
-UPLOADS_DIR = "uploads"
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATES_DIR = os.path.join(_BASE_DIR, "templates")
+UPLOADS_DIR = os.path.join(_BASE_DIR, "uploads")
 SESSION_TTL_SECONDS = 2 * 3600
 CLEANUP_INTERVAL_SECONDS = 30 * 60
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(_BASE_DIR, "frontend")), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(os.path.join(_BASE_DIR, "frontend", "index.html"))
 
 
 def _session_dir(doc_id: str) -> str:
@@ -391,11 +397,6 @@ def _parse_docx(docx_path: str) -> list[dict]:
             ctx.push(result["detected_level"], para.text[:20])
         paragraphs.append(result)
     return paragraphs
-
-
-@app.get("/")
-def index():
-    return FileResponse("frontend/index.html")
 
 
 @app.get("/templates")
