@@ -503,32 +503,20 @@ function buildOriginalNav() {
   nav.innerHTML = '<div class="nav-title">导航 - 标题</div>';
   const frame = document.getElementById("original-frame");
   if (!frame) return;
-  const blocks = Array.from(frame.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li"));
-  const norm = s => (s || "").replace(/\s+/g, "").trim();
-  const used = new Set();
   let count = 0;
   paragraphs.forEach((p, i) => {
     const lvl = p.detected_level;
     if (!lvl || lvl === "Body" || lvl === "Equation") return;
     const text = (p.original_text || "").trim();
     if (!text) return;
-    const key = norm(text);
-    let target = null;
-    for (const el of blocks) {
-      if (used.has(el)) continue;
-      if (norm(el.textContent).indexOf(key.slice(0, 40)) !== -1) {
-        target = el; break;
-      }
-    }
-    if (target) used.add(target);
-    const anchorId = `orig-nav-anchor-${i}`;
-    if (target && !target.id) target.id = anchorId;
     const item = document.createElement("div");
     item.className = `nav-item lvl-${lvl}`;
     item.textContent = text.length > 40 ? text.slice(0, 40) + "…" : text;
     item.title = `${lvl}  ${text}`;
     styleNavItem(item, lvl);
     item.addEventListener("click", () => {
+      // 直接用 data-para-idx 精确定位，避免文本匹配误跳到目录页
+      const target = frame.querySelector(`[data-para-idx="${i}"]`);
       if (!target) return;
       target.scrollIntoView({ behavior: "smooth", block: "start" });
       const prev = target.style.background;
