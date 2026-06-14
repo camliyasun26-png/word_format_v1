@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <title>Word 格式化工具</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="document._katexReady=true; if(window._katexPendingRender) window._katexPendingRender()"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #f0f7ff 0%, #e6f0fa 100%); min-height: 100vh; }
   .header { background: linear-gradient(135deg, #2e5c8a 0%, #1e4a7a 50%, #4a6fa5 100%); color: #fff; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
@@ -123,6 +127,28 @@ let currentFilename = null;
 let currentTemplate = "report_cn.yaml";
 let templateData = null;
 
+// KaTeX 渲染
+function renderKatex(rootEl) {
+  if (!rootEl) return;
+  if (!document._katexReady) {
+    window._katexPendingRender = () => renderKatex(rootEl);
+    return;
+  }
+  try {
+    renderMathInElement(rootEl, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "\\[", right: "\\]", display: true },
+      ],
+      throwOnError: false,
+      output: "html",
+    });
+  } catch (e) {
+    console.warn("KaTeX render error:", e);
+  }
+}
+
 const SESSION_KEY = "wordFormatSession";
 
 function saveSession() {
@@ -222,6 +248,7 @@ document.getElementById("upload-btn").addEventListener("click", async () => {
   document.getElementById("original-frame").innerHTML = data.original_html || "";
   annotateMediaNotes("original-frame");
   buildOriginalNav();
+  renderKatex(document.getElementById("original-frame"));
 
   await refreshPreview();
   document.getElementById("export-btn").disabled = false;
@@ -270,6 +297,7 @@ async function restoreSession() {
   document.getElementById("original-frame").innerHTML = data.original_html || "";
   annotateMediaNotes("original-frame");
   buildOriginalNav();
+  renderKatex(document.getElementById("original-frame"));
   await refreshPreview();
   document.getElementById("export-btn").disabled = false;
   saveSession();
@@ -370,6 +398,7 @@ async function refreshPreview() {
     frame.innerHTML = parts.join("\n");
     insertMediaPlaceholders(frame);
     buildPreviewNav();
+    renderKatex(frame);
   } catch (e) {
     console.error("refreshPreview failed:", e);
     setStatus("格式化预览渲染失败: " + e.message);

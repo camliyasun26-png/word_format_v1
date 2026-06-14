@@ -20,16 +20,22 @@ def _max_preset_level(template: dict) -> str:
 
 def render_paragraph_html(text: str, level: str, template: dict) -> str:
     text = text or ""
-    # 处理公式级别
+    # 处理公式级别：用 LaTeX display 模式渲染
     if level == "Equation":
         eq_config = template.get("equation", {})
-        font_name = eq_config.get("font_name", "Times New Roman")
-        font_size_pt = eq_config.get("font_size", 10.5)
         alignment = _ALIGNMENT_MAP.get(eq_config.get("alignment", "RIGHT"), "right")
         escaped = html_lib.escape(text)
-        return f'<p style="font-family:\'{font_name}\',Times New Roman,serif;font-size:{font_size_pt}pt;text-align:{alignment};margin:0;padding:2px 0">{escaped}</p>'
+        return (
+            f'<p style="text-align:{alignment};margin:2px 0;padding:2px 0">'
+            f'<span class="katex-formula" data-latex="{escaped}">\\({escaped}\\)</span>'
+            f'</p>'
+        )
     
     key = level.lower() if level != "Body" else "body"
+
+    # 空段落：输出最小高度占位，避免在格式化预览中撑出大量空白
+    if not text.strip():
+        return '<p style="margin:0;padding:0;line-height:0.8em;font-size:8pt"> </p>'
 
     if key not in template:
         # Hj 超出预设 Hn：仅用 Hn 的字体，其余样式不应用预设格式

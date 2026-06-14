@@ -234,11 +234,308 @@ async def _start_cleanup() -> None:
     asyncio.create_task(_cleanup_loop())
 
 
+# ─── OMML → LaTeX 转换器 ────────────────────────────────────────────────────
+_M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_W_NS_MAIN = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+def _m(tag: str) -> str:
+    return f"{{{_M_NS}}}{tag}"
+
+# OMML 运算符/符号 → LaTeX 映射
+_OMML_SYM_MAP = {
+    "∑": r"\sum", "∏": r"\prod", "∫": r"\int", "∬": r"\iint",
+    "∭": r"\iiint", "∮": r"\oint", "√": r"\sqrt", "∞": r"\infty",
+    "±": r"\pm", "∓": r"\mp", "×": r"\times", "÷": r"\div",
+    "≤": r"\leq", "≥": r"\geq", "≠": r"\neq", "≈": r"\approx",
+    "∈": r"\in", "∉": r"\notin", "⊂": r"\subset", "⊃": r"\supset",
+    "⊆": r"\subseteq", "⊇": r"\supseteq", "∪": r"\cup", "∩": r"\cap",
+    "→": r"\to", "←": r"\leftarrow", "⇒": r"\Rightarrow", "⇐": r"\Leftarrow",
+    "⇔": r"\Leftrightarrow", "↔": r"\leftrightarrow",
+    "∀": r"\forall", "∃": r"\exists", "¬": r"\neg",
+    "∧": r"\wedge", "∨": r"\vee", "⊕": r"\oplus", "⊗": r"\otimes",
+    "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
+    "ε": r"\varepsilon", "ζ": r"\zeta", "η": r"\eta", "θ": r"\theta",
+    "ι": r"\iota", "κ": r"\kappa", "λ": r"\lambda", "μ": r"\mu",
+    "ν": r"\nu", "ξ": r"\xi", "π": r"\pi", "ρ": r"\rho",
+    "σ": r"\sigma", "τ": r"\tau", "υ": r"\upsilon", "φ": r"\varphi",
+    "χ": r"\chi", "ψ": r"\psi", "ω": r"\omega",
+    "Α": "A", "Β": "B", "Γ": r"\Gamma", "Δ": r"\Delta",
+    "Ε": "E", "Ζ": "Z", "Η": "H", "Θ": r"\Theta",
+    "Λ": r"\Lambda", "Μ": "M", "Ν": "N", "Ξ": r"\Xi",
+    "Π": r"\Pi", "Ρ": "R", "Σ": r"\Sigma", "Τ": "T",
+    "Υ": r"\Upsilon", "Φ": r"\Phi", "Χ": "X", "Ψ": r"\Psi",
+    "Ω": r"\Omega",
+    "′": "'", "″": "''", "∂": r"\partial", "∇": r"\nabla",
+    "·": r"\cdot", "…": r"\ldots", "⋯": r"\cdots", "⋮": r"\vdots",
+    "⋱": r"\ddots", "‖": r"\|", "∥": r"\|",
+    "⟨": r"\langle", "⟩": r"\rangle", "⌈": r"\lceil", "⌉": r"\rceil",
+    "⌊": r"\lfloor", "⌋": r"\rfloor",
+    "ℝ": r"\mathbb{R}", "ℤ": r"\mathbb{Z}", "ℕ": r"\mathbb{N}",
+    "ℚ": r"\mathbb{Q}", "ℂ": r"\mathbb{C}",
+    "\u2212": "-",  # MINUS SIGN → 普通减号
+    "\u2061": "",   # FUNCTION APPLICATION (不可见)
+    "\u2062": "",   # INVISIBLE TIMES
+    "\u2063": ",",  # INVISIBLE SEPARATOR
+    "\u2064": "",   # INVISIBLE PLUS
+    "\u2219": r"\bullet",  # BULLET OPERATOR
+    "\u2220": r"\angle",
+    "\u22c5": r"\cdot",
+    "\u25a1": r"\square",
+    "\u25cb": r"\circ",
+    "\u2299": r"\odot",
+}
+
+def _omml_text_to_latex(text: str) -> str:
+    """将 OMML <m:t> 文本中的特殊字符映射到 LaTeX。"""
+    result = []
+    for ch in text:
+        result.append(_OMML_SYM_MAP.get(ch, ch))
+    return "".join(result)
+
+def _needs_braces(s: str) -> str:
+    """如果 s 超过一个 token 需要花括号包裹。"""
+    s = s.strip()
+    if not s:
+        return "{}"
+    # 单个字符或单个 \cmd 不需要花括号
+    if len(s) == 1:
+        return s
+    if s.startswith("\\") and " " not in s and "{" not in s:
+        return s
+    return "{" + s + "}"
+
+def _omml_to_latex(el) -> str:
+    """递归将 OMML 元素转为 LaTeX 字符串。"""
+    tag = el.tag
+
+    # 纯文本 run
+    if tag == _m("t"):
+        return _omml_text_to_latex(el.text or "")
+
+    # math run <m:r>: 收集样式+文本
+    if tag == _m("r"):
+        sty_el = el.find(_m("rPr") + "/" + _m("sty"))  # 注意：find 不支持这种写法
+        # 改用直接查找
+        rpr = el.find(_m("rPr"))
+        sty = None
+        if rpr is not None:
+            sty_el = rpr.find(_m("sty"))
+            if sty_el is not None:
+                sty = sty_el.get(_m("val"))
+        t_el = el.find(_m("t"))
+        text = _omml_text_to_latex(t_el.text or "") if t_el is not None else ""
+        if not text:
+            return ""
+        if sty in ("b", "bi"):
+            return r"\mathbf{" + text + "}"
+        if sty == "i":
+            return r"\mathit{" + text + "}"
+        # 普通：单字母默认斜体，多字符用 \mathrm
+        if len(text) == 1 and text.isalpha():
+            return text  # 默认斜体
+        if text.replace(".", "").replace("-", "").replace("+", "").isdigit() or \
+           all(c in "0123456789.,-+eE" for c in text):
+            return text  # 数字
+        return text
+
+    # 上标 <m:sSup>
+    if tag == _m("sSup"):
+        base = el.find(_m("e"))
+        sup = el.find(_m("sup"))
+        b = _omml_to_latex(base) if base is not None else ""
+        s = _omml_to_latex(sup) if sup is not None else ""
+        return f"{_needs_braces(b)}^{_needs_braces(s)}"
+
+    # 下标 <m:sSub>
+    if tag == _m("sSub"):
+        base = el.find(_m("e"))
+        sub = el.find(_m("sub"))
+        b = _omml_to_latex(base) if base is not None else ""
+        s = _omml_to_latex(sub) if sub is not None else ""
+        return f"{_needs_braces(b)}_{_needs_braces(s)}"
+
+    # 上下标 <m:sSubSup>
+    if tag == _m("sSubSup"):
+        base = el.find(_m("e"))
+        sub = el.find(_m("sub"))
+        sup = el.find(_m("sup"))
+        b = _omml_to_latex(base) if base is not None else ""
+        sb = _omml_to_latex(sub) if sub is not None else ""
+        sp = _omml_to_latex(sup) if sup is not None else ""
+        return f"{_needs_braces(b)}_{_needs_braces(sb)}^{_needs_braces(sp)}"
+
+    # 分数 <m:f>
+    if tag == _m("f"):
+        num = el.find(_m("num"))
+        den = el.find(_m("den"))
+        n = _omml_to_latex(num) if num is not None else ""
+        d = _omml_to_latex(den) if den is not None else ""
+        return r"\frac{" + n + "}{" + d + "}"
+
+    # 根号 <m:rad>
+    if tag == _m("rad"):
+        deg = el.find(_m("deg"))
+        base = el.find(_m("e"))
+        b = _omml_to_latex(base) if base is not None else ""
+        deg_text = _omml_to_latex(deg).strip() if deg is not None else ""
+        if deg_text and deg_text != "":
+            return r"\sqrt[" + deg_text + "]{" + b + "}"
+        return r"\sqrt{" + b + "}"
+
+    # 极限/求和/积分 <m:nary>
+    if tag == _m("nary"):
+        pr = el.find(_m("naryPr"))
+        chr_el = pr.find(_m("chr")) if pr is not None else None
+        chr_val = chr_el.get(_m("val"), "∫") if chr_el is not None else "∫"
+        op = _OMML_SYM_MAP.get(chr_val, chr_val)
+        sub = el.find(_m("sub"))
+        sup = el.find(_m("sup"))
+        base = el.find(_m("e"))
+        s = _omml_to_latex(sub).strip() if sub is not None else ""
+        p = _omml_to_latex(sup).strip() if sup is not None else ""
+        b = _omml_to_latex(base) if base is not None else ""
+        result = op
+        if s:
+            result += "_{" + s + "}"
+        if p:
+            result += "^{" + p + "}"
+        result += " " + b
+        return result
+
+    # 括号 <m:d>
+    if tag == _m("d"):
+        pr = el.find(_m("dPr"))
+        beg_chr = "("
+        end_chr = ")"
+        if pr is not None:
+            beg_el = pr.find(_m("begChr"))
+            end_el = pr.find(_m("endChr"))
+            sep_el = pr.find(_m("sepChr"))
+            if beg_el is not None:
+                beg_chr = beg_el.get(_m("val"), "(")
+            if end_el is not None:
+                end_chr = end_el.get(_m("val"), ")")
+        # 内容
+        parts = [_omml_to_latex(e) for e in el.findall(_m("e"))]
+        inner = ", ".join(parts)
+        # 映射括号字符
+        _lmap = {"(": r"\left(", "[": r"\left[", "{": r"\left\{",
+                 "|": r"\left|", "‖": r"\left\|",
+                 "⌈": r"\left\lceil", "⌊": r"\left\lfloor",
+                 "⟨": r"\left\langle", "": "", " ": ""}
+        _rmap = {")": r"\right)", "]": r"\right]", "}": r"\right\}",
+                 "|": r"\right|", "‖": r"\right\|",
+                 "⌉": r"\right\rceil", "⌋": r"\right\rfloor",
+                 "⟩": r"\right\rangle", "": "", " ": ""}
+        lb = _lmap.get(beg_chr, r"\left" + beg_chr)
+        rb = _rmap.get(end_chr, r"\right" + end_chr)
+        if lb == "" and rb == "":
+            return inner
+        return lb + inner + rb
+
+    # 矩阵 <m:m>
+    if tag == _m("m"):
+        rows = []
+        for mr in el.findall(_m("mr")):
+            cells = [_omml_to_latex(e) for e in mr.findall(_m("e"))]
+            rows.append(" & ".join(cells))
+        return r"\begin{pmatrix}" + r" \\ ".join(rows) + r"\end{pmatrix}"
+
+    # 函数 <m:func>
+    if tag == _m("func"):
+        fname = el.find(_m("fName"))
+        base = el.find(_m("e"))
+        fn = _omml_to_latex(fname) if fname is not None else ""
+        b = _omml_to_latex(base) if base is not None else ""
+        return fn + b
+
+    # 累积极限 <m:limLow> / <m:limUpp>
+    if tag == _m("limLow"):
+        base = el.find(_m("e"))
+        lim = el.find(_m("lim"))
+        b = _omml_to_latex(base) if base is not None else ""
+        l = _omml_to_latex(lim) if lim is not None else ""
+        return b + "_{" + l + "}"
+
+    if tag == _m("limUpp"):
+        base = el.find(_m("e"))
+        lim = el.find(_m("lim"))
+        b = _omml_to_latex(base) if base is not None else ""
+        l = _omml_to_latex(lim) if lim is not None else ""
+        return b + "^{" + l + "}"
+
+    # 过线/下划线 <m:bar>
+    if tag == _m("bar"):
+        pr = el.find(_m("barPr"))
+        pos_el = pr.find(_m("pos")) if pr is not None else None
+        pos = pos_el.get(_m("val"), "top") if pos_el is not None else "top"
+        base = el.find(_m("e"))
+        b = _omml_to_latex(base) if base is not None else ""
+        if pos == "bot":
+            return r"\underline{" + b + "}"
+        return r"\overline{" + b + "}"
+
+    # accent <m:acc>
+    if tag == _m("acc"):
+        pr = el.find(_m("accPr"))
+        chr_el = pr.find(_m("chr")) if pr is not None else None
+        acc_ch = chr_el.get(_m("val"), "̂") if chr_el is not None else "̂"
+        base = el.find(_m("e"))
+        b = _omml_to_latex(base) if base is not None else ""
+        _acc_map = {
+            "̂": r"\hat", "̃": r"\tilde", "̄": r"\bar", "̇": r"\dot",
+            "̈": r"\ddot", "⃗": r"\vec", "̆": r"\breve", "̌": r"\check",
+        }
+        cmd = _acc_map.get(acc_ch, r"\hat")
+        return cmd + "{" + b + "}"
+
+    # eqArr (方程组) <m:eqArr>
+    if tag == _m("eqArr"):
+        rows = [_omml_to_latex(e) for e in el.findall(_m("e"))]
+        return r"\begin{cases}" + r" \\ ".join(rows) + r"\end{cases}"
+
+    # groupChr <m:groupChr>
+    if tag == _m("groupChr"):
+        pr = el.find(_m("groupChrPr"))
+        chr_el = pr.find(_m("chr")) if pr is not None else None
+        ch = chr_el.get(_m("val"), "⏞") if chr_el is not None else "⏞"
+        pos_el = pr.find(_m("pos")) if pr is not None else None
+        pos = pos_el.get(_m("val"), "top") if pos_el is not None else "top"
+        base = el.find(_m("e"))
+        b = _omml_to_latex(base) if base is not None else ""
+        if pos == "bot":
+            return r"\underbrace{" + b + "}"
+        return r"\overbrace{" + b + "}"
+
+    # phant (phantom)
+    if tag == _m("phant"):
+        base = el.find(_m("e"))
+        return _omml_to_latex(base) if base is not None else ""
+
+    # 通用容器：递归所有子元素拼接
+    parts = []
+    for child in el:
+        # 跳过 ctrlPr (控制属性，不产生输出)
+        if child.tag in (_m("ctrlPr"), _m("rPr"), _m("sSubSupPr"), _m("sSupPr"),
+                         _m("sSubPr"), _m("fPr"), _m("radPr"), _m("dPr"),
+                         _m("mPr"), _m("naryPr"), _m("funcPr"), _m("barPr"),
+                         _m("accPr"), _m("groupChrPr"), _m("eqArrPr"),
+                         _m("limLowPr"), _m("limUppPr")):
+            continue
+        parts.append(_omml_to_latex(child))
+    return "".join(parts)
+
+
+def _omml_element_to_latex(omath_el) -> str:
+    """将一个 <m:oMath> 元素转为 LaTeX（不含 $ 包裹）。"""
+    return _omml_to_latex(omath_el).strip()
+
+
 def _extract_equations_from_docx(docx_bytes: bytes) -> list[tuple[int, str]]:
-    """从 DOCX 中提取公式及其位置（支持 WPS 公式）。
-    
+    """从 DOCX 中提取公式并转为 LaTeX。
+
     只遍历 body 的直接子 <w:p>，与 doc.paragraphs 索引对齐。
-    返回 (para_idx, formula_text) 列表。
+    返回 (para_idx, latex_str) 列表。
     """
     equations = []
     try:
@@ -248,28 +545,27 @@ def _extract_equations_from_docx(docx_bytes: bytes) -> list[tuple[int, str]]:
             with zf.open("word/document.xml") as f:
                 tree = ET.parse(f)
 
-        W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-        M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+        W = _W_NS_MAIN
         W_BODY = f"{{{W}}}body"
         W_P = f"{{{W}}}p"
-        M_OMATH = f"{{{M}}}oMath"
-        M_T = f"{{{M}}}t"
+        M_OMATH = _m("oMath")
 
         body = tree.getroot().find(W_BODY)
         if body is None:
             return equations
 
         for para_idx, p in enumerate(child for child in body if child.tag == W_P):
-            math_text = []
+            latex_parts = []
             for omath in p.iter(M_OMATH):
-                for t in omath.iter(M_T):
-                    if t.text:
-                        math_text.append(t.text)
-            if math_text:
-                equations.append((para_idx, " ".join(math_text)))
+                latex = _omml_element_to_latex(omath)
+                if latex:
+                    latex_parts.append(latex)
+            if latex_parts:
+                equations.append((para_idx, r" \quad ".join(latex_parts)))
     except Exception:
         pass
     return equations
+
 
 
 def _build_original_html(docx_bytes: bytes) -> str:
@@ -345,10 +641,11 @@ def _build_original_html(docx_bytes: bytes) -> str:
                         continue
                     pi = block_part_indices[seq_idx]
                     p_html = parts[pi]
-                    escaped = html_lib.escape(formula)
+                    # 用 \(...\) 行内公式包裹 LaTeX，供 KaTeX 渲染
                     eq_span = (
-                        f' <span style="font-family:\'Times New Roman\',serif;'
-                        f'font-size:10.5pt;color:#555;">[{escaped}]</span>'
+                        f' <span class="katex-formula" data-latex="{html_lib.escape(formula)}"'
+                        f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
+                        f'\\({html_lib.escape(formula)}\\)</span>'
                     )
                     # 在 </p> 前插入公式
                     parts[pi] = p_html[:-4] + eq_span + "</p>"
