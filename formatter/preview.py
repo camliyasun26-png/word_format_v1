@@ -19,6 +19,15 @@ def _max_preset_level(template: dict) -> str:
 
 
 def render_paragraph_html(text: str, level: str, template: dict) -> str:
+    # 处理公式级别
+    if level == "Equation":
+        eq_config = template.get("equation", {})
+        font_name = eq_config.get("font_name", "Times New Roman")
+        font_size_pt = eq_config.get("font_size", 10.5)
+        alignment = _ALIGNMENT_MAP.get(eq_config.get("alignment", "RIGHT"), "right")
+        escaped = html_lib.escape(text)
+        return f'<p style="font-family:\'{font_name}\',Times New Roman,serif;font-size:{font_size_pt}pt;text-align:{alignment};margin:0;padding:2px 0">{escaped}</p>'
+    
     key = level.lower() if level != "Body" else "body"
 
     if key not in template:

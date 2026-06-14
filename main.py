@@ -301,7 +301,13 @@ def _parse_docx(docx_path: str) -> list[dict]:
         result["is_formula"] = i in equation_map
         result["formula_text"] = equation_map.get(i, None)
         
-        if result["detected_level"] != "Body":
+        # 如果是公式段落，使用公式文本替换 original_text
+        if i in equation_map:
+            result["original_text"] = equation_map[i]
+            # 设置为特殊的公式级别以便应用公式格式
+            result["detected_level"] = "Equation"
+        
+        if result["detected_level"] != "Body" and result["detected_level"] != "Equation":
             ctx.push(result["detected_level"], para.text[:20])
         paragraphs.append(result)
     return paragraphs
