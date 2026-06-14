@@ -2,17 +2,18 @@
 
 输入格式混乱的 Word 文档（`.doc` / `.docx`），自动识别段落层级，经人工少量核验后，套用预设格式模板，输出整洁规范的文档。
 ![项目演示图片](./image/demo.png)
-#直接可跳转网页链接：https://word-format-v1.onrender.com/
+## 直接可跳转网页链接：https://word-format-v1.onrender.com/
 ---
+# 下面给出本地运行方法
 
-## 环境要求
+### 环境要求
 
 - Python 3.11+
 - Windows 操作系统（需本机安装 Microsoft Word，用于 `.doc` 格式转换）
 
 ---
 
-## 安装
+### 安装
 
 ```bash
 pip install -r requirements.txt
@@ -20,7 +21,7 @@ pip install -r requirements.txt
 
 ---
 
-## 启动服务
+### 启动服务
 
 ```bash
 uvicorn main:app --reload --port 8000
@@ -30,9 +31,9 @@ uvicorn main:app --reload --port 8000
 
 ---
 
-## 使用流程
+### 使用流程
 
-### 1. 上传文档
+#### 1. 上传文档
 
 点击「文件」选择 `.doc` 或 `.docx` 文件，点击「上传解析」。
 
@@ -41,7 +42,7 @@ uvicorn main:app --reload --port 8000
 - 置信度评估（高/中/低）
 - 原文预览加载
 
-### 2. 审核段落层级（Tab1）
+#### 2. 审核段落层级（Tab1）
 
 | 列 | 说明 |
 |---|---|
@@ -55,19 +56,19 @@ uvicorn main:app --reload --port 8000
 
 修改层级下拉后，Tab3 格式化预览实时更新。
 
-### 3. 原文预览（Tab2）
+#### 3. 原文预览（Tab2）
 
 展示原始文档的排版效果，只读。
 
-### 4. 格式化预览（Tab3）
+#### 4. 格式化预览（Tab3）
 
 展示套用格式模板后的效果，随 Tab1 层级修改实时更新，所见即所得。
 
-### 5. 切换格式模板
+#### 5. 切换格式模板
 
 页面顶部「模板」下拉可切换 `templates/` 目录下的所有 `.yaml` 模板，切换后 Tab3 立即用新模板重新渲染。
 
-### 6. 导出文档
+#### 6. 导出文档
 
 确认预览效果后点击「确认输出」，自动下载格式化后的文档。
 
@@ -76,7 +77,7 @@ uvicorn main:app --reload --port 8000
 
 ---
 
-## 格式模板
+### 格式模板
 
 模板文件存放于 `templates/` 目录，格式为 YAML。
 
@@ -92,13 +93,13 @@ uvicorn main:app --reload --port 8000
 
 页边距：上下 2.54cm，左右 3.17cm，全部层级使用仿宋_GB2312，行距 1.5。
 
-### 添加自定义模板
+#### 添加自定义模板
 
 在 `templates/` 目录下新建 `.yaml` 文件，参照 `report_cn.yaml` 结构填写各层级配置，重启服务后即可在模板下拉中选择。
 
 ---
 
-## 层级判定规则说明
+### 层级判定规则说明
 
 系统按以下顺序识别每个段落的层级（加粗的 run 触发判定）：
 
@@ -122,7 +123,7 @@ uvicorn main:app --reload --port 8000
 
 ---
 
-## 运行测试
+### 运行测试
 
 ```bash
 pytest tests/ -v
