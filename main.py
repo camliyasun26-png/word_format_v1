@@ -270,6 +270,11 @@ def get_template(name: str = "report_cn.yaml"):
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
+    # 验证文件扩展名
+    filename = file.filename.lower()
+    if not (filename.endswith(".doc") or filename.endswith(".docx")):
+        raise HTTPException(status_code=400, detail="仅支持 .doc 和 .docx 格式的文件")
+    
     doc_id = uuid.uuid4().hex
     sess = _session_dir(doc_id)
     os.makedirs(sess, exist_ok=True)
@@ -279,12 +284,17 @@ async def upload(file: UploadFile = File(...)):
         f.write(await file.read())
 
     was_doc = is_doc(raw_path)
-    if was_doc:
-        docx_path = to_docx(raw_path, sess)
-    else:
-        docx_path = raw_path
+    try:
+        if was_doc:
+            docx_path = to_docx(raw_path, sess)
+        else:
+            docx_path = raw_path
 
-    paragraphs = _parse_docx(docx_path)
+        paragraphs = _parse_docx(docx_path)
+    except Exception as e:
+        # 清理已创建的会话目录
+        shutil.rmtree(sess, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"无法解析文档: {str(e)}")
 
     with open(docx_path, "rb") as f:
         docx_bytes = f.read()
