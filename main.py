@@ -229,7 +229,11 @@ async def _start_cleanup() -> None:
 
 
 def _extract_equations_from_docx(docx_bytes: bytes) -> list[tuple[int, str]]:
-    """从 DOCX 中提取公式及其位置（支持 WPS 公式）"""
+    """从 DOCX 中提取公式及其位置（支持 WPS 公式）。
+    
+    只遍历 body 的直接子 <w:p>，与 doc.paragraphs 索引对齐。
+    返回 (para_idx, formula_text) 列表。
+    """
     equations = []
     try:
         with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
@@ -237,28 +241,39 @@ def _extract_equations_from_docx(docx_bytes: bytes) -> list[tuple[int, str]]:
                 return equations
             with zf.open("word/document.xml") as f:
                 tree = ET.parse(f)
-        
-        ns = {
-            'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
-            'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math'
-        }
-        
-        para_idx = -1
-        for p in tree.findall('.//w:p', ns):
-            para_idx += 1
+
+        W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+        W_BODY = f"{{{W}}}body"
+        W_P = f"{{{W}}}p"
+        M_OMATH = f"{{{M}}}oMath"
+        M_T = f"{{{M}}}t"
+
+        body = tree.getroot().find(W_BODY)
+        if body is None:
+            return equations
+
+        for para_idx, p in enumerate(child for child in body if child.tag == W_P):
             math_text = []
-            for omath in p.findall('.//m:oMath', ns):
-                for t in omath.findall('.//m:t', ns):
+            for omath in p.iter(M_OMATH):
+                for t in omath.iter(M_T):
                     if t.text:
                         math_text.append(t.text)
             if math_text:
-                equations.append((para_idx, ' '.join(math_text)))
+                equations.append((para_idx, " ".join(math_text)))
     except Exception:
         pass
     return equations
 
 
 def _build_original_html(docx_bytes: bytes) -> str:
+    """将 DOCX 转换为 HTML 用于原文预览。
+
+    公式处理：通过 mammoth 的 convert_to_html 转换文档，
+    再利用 XML 提取到的公式文本，按段落顺序注入到 HTML 中。
+    mammoth 遇到 oMath 会输出空内容，我们检测段落在 XML 中
+    是否含 oMath，将公式文本追加到对应段落的 HTML 输出中。
+    """
     style_map = """
     p[style-name='Heading 1'] => h1:fresh
     p[style-name='Heading 2'] => h2:fresh
@@ -266,14 +281,73 @@ def _build_original_html(docx_bytes: bytes) -> str:
     try:
         result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=style_map)
         html = result.value
-        
-        # 提取并插入公式
+
+        # 从 XML 提取每个段落的公式文本（只看 body 直接子 w:p）
         equations = _extract_equations_from_docx(docx_bytes)
-        for para_idx, formula in equations:
-            # 在空段落位置插入公式
-            formula_html = f'<p class="formula" style="text-align: right; font-family: Times New Roman; font-size: 10.5pt;">{formula}</p>'
-            html = html.replace('<p></p>', formula_html, 1)
-        
+        if equations:
+            import html as html_lib
+            # mammoth 输出的 HTML 段落数 != doc.paragraphs 数（mammoth 包含表格内段落）
+            # 策略：将 HTML 按顶层块拆分，匹配 <p> 和 <table>
+            # body 直接子元素按顺序：<w:p> -> <p>，<w:tbl> -> <table>
+            # 所以将 HTML 按 <p> 和 <table> 顶层块拆分，
+            # 再遍历 body 直接子元素序列，公式索引仅针对 w:p
+
+            # 构建 body 直接子元素类型序列（p/table），以便对齐 HTML 输出
+            try:
+                with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+                    with zf.open("word/document.xml") as f:
+                        xml_tree = ET.parse(f)
+                W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                W_BODY = f"{{{W_NS}}}body"
+                W_P = f"{{{W_NS}}}p"
+                W_TBL = f"{{{W_NS}}}tbl"
+                body_el = xml_tree.getroot().find(W_BODY)
+                # body 直接子元素类型序列（只含 p 和 tbl）
+                body_seq = [
+                    "p" if c.tag == W_P else "tbl"
+                    for c in body_el
+                    if c.tag in (W_P, W_TBL)
+                ]
+            except Exception:
+                body_seq = []
+
+            # 构建 para_idx -> formula 映射
+            eq_map = {idx: formula for idx, formula in equations}
+
+            if body_seq:
+                # 将 HTML 拆分为顶层 <p> 和 <table> 块（保留顺序）
+                # 拆分为 [非块内容, 块标签, 非块内容, 块标签, ...]
+                parts = re.split(
+                    r'(<p[^>]*>.*?</p>|<table>.*?</table>)',
+                    html, flags=re.DOTALL
+                )
+                # 找出 parts 中是块的索引
+                block_part_indices = [
+                    i for i, s in enumerate(parts)
+                    if re.match(r'<p|<table', s)
+                ]
+
+                # body_seq 与 block_part_indices 对齐（长度可能不等，取 min）
+                for seq_idx, block_type in enumerate(body_seq):
+                    if block_type != "p":
+                        continue
+                    # seq_idx 是第几个 p/tbl，也是 doc.paragraphs 中对应的行
+                    if seq_idx not in eq_map:
+                        continue
+                    formula = eq_map[seq_idx]
+                    if seq_idx >= len(block_part_indices):
+                        continue
+                    pi = block_part_indices[seq_idx]
+                    p_html = parts[pi]
+                    escaped = html_lib.escape(formula)
+                    eq_span = (
+                        f' <span style="font-family:\'Times New Roman\',serif;'
+                        f'font-size:10.5pt;color:#555;">[{escaped}]</span>'
+                    )
+                    # 在 </p> 前插入公式
+                    parts[pi] = p_html[:-4] + eq_span + "</p>"
+                html = "".join(parts)
+
         widths = _extract_image_widths_cm(docx_bytes)
         html = _inject_image_widths(html, widths)
         anchors = _extract_media_anchors(docx_bytes)
@@ -300,13 +374,19 @@ def _parse_docx(docx_path: str) -> list[dict]:
         result["index"] = i
         result["is_formula"] = i in equation_map
         result["formula_text"] = equation_map.get(i, None)
-        
-        # 如果是公式段落，使用公式文本替换 original_text
+
         if i in equation_map:
-            result["original_text"] = equation_map[i]
-            # 设置为特殊的公式级别以便应用公式格式
-            result["detected_level"] = "Equation"
-        
+            formula = equation_map[i]
+            existing_text = result.get("original_text", "").strip()
+            if existing_text:
+                # 段落同时包含普通文本和公式，将公式文本追加到末尾
+                result["original_text"] = f"{existing_text} [{formula}]"
+                # 保持原始 detected_level，不强制改为 Equation
+            else:
+                # 纯公式段落（doc.text 为空）
+                result["original_text"] = formula
+                result["detected_level"] = "Equation"
+
         if result["detected_level"] != "Body" and result["detected_level"] != "Equation":
             ctx.push(result["detected_level"], para.text[:20])
         paragraphs.append(result)
