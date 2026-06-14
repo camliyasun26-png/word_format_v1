@@ -571,90 +571,86 @@ def _extract_equations_from_docx(docx_bytes: bytes) -> list[tuple[int, str]]:
 def _build_original_html(docx_bytes: bytes) -> str:
     """将 DOCX 转换为 HTML 用于原文预览。
 
-    公式处理：通过 mammoth 的 convert_to_html 转换文档，
-    再利用 XML 提取到的公式文本，按段落顺序注入到 HTML 中。
-    mammoth 遇到 oMath 会输出空内容，我们检测段落在 XML 中
-    是否含 oMath，将公式文本追加到对应段落的 HTML 输出中。
+    在每个顶层 <p> 上注入 data-para-idx 属性，供格式化预览克隆后按索引查找段落。
+    同时将 OMML 公式转换为 LaTeX 注入对应段落，供 KaTeX 渲染。
     """
+    import html as html_lib
+
     style_map = """
     p[style-name='Heading 1'] => h1:fresh
     p[style-name='Heading 2'] => h2:fresh
     """
     try:
         result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=style_map)
-        html = result.value
+        html_str = result.value
 
-        # 从 XML 提取每个段落的公式文本（只看 body 直接子 w:p）
+        # 构建 body 直接子元素类型序列（p/tbl），用于对齐 HTML 输出
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        W_BODY = f"{{{W_NS}}}body"
+        W_P    = f"{{{W_NS}}}p"
+        W_TBL  = f"{{{W_NS}}}tbl"
+        try:
+            with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+                with zf.open("word/document.xml") as xf:
+                    xml_tree = ET.parse(xf)
+            body_el = xml_tree.getroot().find(W_BODY)
+            body_seq = [
+                "p" if c.tag == W_P else "tbl"
+                for c in body_el
+                if c.tag in (W_P, W_TBL)
+            ]
+        except Exception:
+            body_seq = []
+
+        # 公式映射：para_idx -> latex
         equations = _extract_equations_from_docx(docx_bytes)
-        if equations:
-            import html as html_lib
-            # mammoth 输出的 HTML 段落数 != doc.paragraphs 数（mammoth 包含表格内段落）
-            # 策略：将 HTML 按顶层块拆分，匹配 <p> 和 <table>
-            # body 直接子元素按顺序：<w:p> -> <p>，<w:tbl> -> <table>
-            # 所以将 HTML 按 <p> 和 <table> 顶层块拆分，
-            # 再遍历 body 直接子元素序列，公式索引仅针对 w:p
+        eq_map = {idx: formula for idx, formula in equations}
 
-            # 构建 body 直接子元素类型序列（p/table），以便对齐 HTML 输出
-            try:
-                with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
-                    with zf.open("word/document.xml") as f:
-                        xml_tree = ET.parse(f)
-                W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                W_BODY = f"{{{W_NS}}}body"
-                W_P = f"{{{W_NS}}}p"
-                W_TBL = f"{{{W_NS}}}tbl"
-                body_el = xml_tree.getroot().find(W_BODY)
-                # body 直接子元素类型序列（只含 p 和 tbl）
-                body_seq = [
-                    "p" if c.tag == W_P else "tbl"
-                    for c in body_el
-                    if c.tag in (W_P, W_TBL)
-                ]
-            except Exception:
-                body_seq = []
+        if body_seq:
+            # 将 HTML 拆分为顶层块（<p...>...</p> 和 <table>...</table>）
+            parts = re.split(
+                r'(<p[^>]*>.*?</p>|<table\b[^>]*>.*?</table>)',
+                html_str, flags=re.DOTALL
+            )
+            # 找出 parts 中每个块的索引
+            block_part_indices = [
+                i for i, s in enumerate(parts)
+                if re.match(r'<p\b|<table\b', s)
+            ]
 
-            # 构建 para_idx -> formula 映射
-            eq_map = {idx: formula for idx, formula in equations}
+            # p 的计数器（para_idx 只计 w:p，不计 w:tbl）
+            para_idx = 0
+            for seq_idx, block_type in enumerate(body_seq):
+                if seq_idx >= len(block_part_indices):
+                    break
+                pi = block_part_indices[seq_idx]
 
-            if body_seq:
-                # 将 HTML 拆分为顶层 <p> 和 <table> 块（保留顺序）
-                # 拆分为 [非块内容, 块标签, 非块内容, 块标签, ...]
-                parts = re.split(
-                    r'(<p[^>]*>.*?</p>|<table>.*?</table>)',
-                    html, flags=re.DOTALL
-                )
-                # 找出 parts 中是块的索引
-                block_part_indices = [
-                    i for i, s in enumerate(parts)
-                    if re.match(r'<p|<table', s)
-                ]
-
-                # body_seq 与 block_part_indices 对齐（长度可能不等，取 min）
-                for seq_idx, block_type in enumerate(body_seq):
-                    if block_type != "p":
-                        continue
-                    # seq_idx 是第几个 p/tbl，也是 doc.paragraphs 中对应的行
-                    if seq_idx not in eq_map:
-                        continue
-                    formula = eq_map[seq_idx]
-                    if seq_idx >= len(block_part_indices):
-                        continue
-                    pi = block_part_indices[seq_idx]
+                if block_type == "p":
                     p_html = parts[pi]
-                    # 用 \(...\) 行内公式包裹 LaTeX，供 KaTeX 渲染
-                    eq_span = (
-                        f' <span class="katex-formula" data-latex="{html_lib.escape(formula)}"'
-                        f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
-                        f'\\({html_lib.escape(formula)}\\)</span>'
+                    # 在 <p 后注入 data-para-idx
+                    p_html = re.sub(
+                        r'^(<p\b)',
+                        rf'\1 data-para-idx="{para_idx}"',
+                        p_html
                     )
-                    # 在 </p> 前插入公式
-                    parts[pi] = p_html[:-4] + eq_span + "</p>"
-                html = "".join(parts)
+                    # 注入公式（如果该段有公式）
+                    if para_idx in eq_map:
+                        formula = eq_map[para_idx]
+                        eq_span = (
+                            f' <span class="katex-formula" data-latex="{html_lib.escape(formula)}"'
+                            f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
+                            f'\\({html_lib.escape(formula)}\\)</span>'
+                        )
+                        p_html = p_html[:-4] + eq_span + "</p>"
+                    parts[pi] = p_html
+                    para_idx += 1
+
+            html_str = "".join(parts)
 
         widths = _extract_image_widths_cm(docx_bytes)
-        html = _inject_image_widths(html, widths)
+        html_str = _inject_image_widths(html_str, widths)
         anchors = _extract_media_anchors(docx_bytes)
-        return _inject_media_ids(html, anchors)
+        return _inject_media_ids(html_str, anchors)
     except Exception as e:
         import logging
         logging.error(f"Mammoth conversion error: {e}")
@@ -816,6 +812,157 @@ class PreviewBatchItem(BaseModel):
 class PreviewBatchRequest(BaseModel):
     items: list[PreviewBatchItem]
     template: str = "report_cn.yaml"
+
+
+def _build_styled_html(docx_bytes: bytes, template_name: str) -> str:
+    """
+    生成格式化预览 HTML：
+    - 遍历 DOCX body 直接子元素（w:p 和 w:tbl）
+    - w:p 段落：用模板样式渲染，保留图片（<img> 从原文 HTML 中提取）
+    - w:tbl 表格：直接使用 mammoth 生成的 <table> HTML
+    - 公式：注入 KaTeX LaTeX span
+    """
+    import html as html_lib
+
+    tpl = load_template(os.path.join(TEMPLATES_DIR, template_name))
+
+    # 1. mammoth 生成原文 HTML，提取表格和图片
+    style_map = """
+    p[style-name='Heading 1'] => h1:fresh
+    p[style-name='Heading 2'] => h2:fresh
+    """
+    try:
+        result = mammoth.convert_to_html(io.BytesIO(docx_bytes), style_map=style_map)
+        orig_html = result.value
+    except Exception:
+        orig_html = ""
+
+    # 从 mammoth HTML 提取顶层 <table> 块（按顺序）
+    tbl_parts = re.findall(r'<table\b[^>]*>.*?</table>', orig_html, flags=re.DOTALL)
+
+    # 从 mammoth HTML 提取所有 <img> 标签（base64），按出现顺序
+    img_tags = re.findall(r'<img[^>]+>', orig_html)
+    img_idx = 0
+
+    # 2. 解析 DOCX XML
+    W_NS   = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    W_BODY = f"{{{W_NS}}}body"
+    W_P    = f"{{{W_NS}}}p"
+    W_TBL  = f"{{{W_NS}}}tbl"
+    M_NS   = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    M_OMATH = f"{{{M_NS}}}oMath"
+    _WP_DRAW = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+            with zf.open("word/document.xml") as xf:
+                xml_tree = ET.parse(xf)
+        body_el = xml_tree.getroot().find(W_BODY)
+    except Exception:
+        return "<p>格式化预览生成失败</p>"
+
+    # 3. 公式映射
+    equations = _extract_equations_from_docx(docx_bytes)
+    eq_map = {idx: formula for idx, formula in equations}
+
+    # 4. 遍历并生成 HTML
+    doc = Document(io.BytesIO(docx_bytes))
+    ctx = ChapterContext()
+    parts_html = []
+    para_idx = 0
+    tbl_idx = 0
+
+    for child in body_el:
+        if child.tag == W_P:
+            # 找到对应的 doc.paragraphs[para_idx]
+            if para_idx < len(doc.paragraphs):
+                para = doc.paragraphs[para_idx]
+            else:
+                para_idx += 1
+                continue
+
+            result = classify_paragraph(para, ctx)
+            level = result.get("detected_level", "Body")
+            text  = result.get("original_text", "") or ""
+
+            if level not in ("Body", "Equation"):
+                ctx.push(level, text[:20])
+
+            # 公式处理
+            if para_idx in eq_map:
+                formula = eq_map[para_idx]
+                if not text.strip():
+                    level = "Equation"
+                    text  = formula
+
+            # 检查段落是否含图片（<wp:inline> or <wp:anchor>）
+            has_image = child.find(f".//{_WP_DRAW}inline") is not None or \
+                        child.find(f".//{_WP_DRAW}anchor") is not None
+
+            if has_image and img_idx < len(img_tags):
+                # 含图片的段落：插入 <img>，不改图片样式
+                img_html = img_tags[img_idx]
+                img_idx += 1
+                eq_span = ""
+                if para_idx in eq_map:
+                    formula = eq_map[para_idx]
+                    escaped = html_lib.escape(formula)
+                    eq_span = (
+                        f' <span class="katex-formula" data-latex="{escaped}"'
+                        f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
+                        f'\\({escaped}\\)</span>'
+                    )
+                parts_html.append(
+                    f'<p data-para-idx="{para_idx}" style="text-align:center;margin:4px 0">'
+                    f'{img_html}{eq_span}</p>'
+                )
+            else:
+                # 普通段落：应用模板样式
+                p_html = render_paragraph_html(text, level, tpl)
+                # 注入 data-para-idx
+                p_html = re.sub(r'^(<p\b)', rf'\1 data-para-idx="{para_idx}"', p_html)
+
+                # 如果有公式且段落非纯公式段，在末尾追加公式 span
+                if para_idx in eq_map and level != "Equation":
+                    formula = eq_map[para_idx]
+                    escaped = html_lib.escape(formula)
+                    eq_span = (
+                        f' <span class="katex-formula" data-latex="{escaped}"'
+                        f' style="font-family:\'Times New Roman\',serif;font-size:10.5pt;">'
+                        f'\\({escaped}\\)</span>'
+                    )
+                    p_html = p_html[:-4] + eq_span + "</p>"
+
+                parts_html.append(p_html)
+
+            para_idx += 1
+
+        elif child.tag == W_TBL:
+            if tbl_idx < len(tbl_parts):
+                # 使用 mammoth 生成的表格 HTML
+                parts_html.append(
+                    f'<div style="overflow-x:auto;margin:8px 0">{tbl_parts[tbl_idx]}</div>'
+                )
+                tbl_idx += 1
+            else:
+                parts_html.append('<div style="color:#999;text-align:center;padding:8px">[表格]</div>')
+
+    return "\n".join(parts_html)
+
+
+@app.post("/preview/full-html")
+def preview_full_html(doc_id: str = Form(...), template: str = Form("report_cn.yaml")):
+    sess = _session_dir(doc_id)
+    meta_path = os.path.join(sess, "meta.json")
+    if not os.path.isfile(meta_path):
+        raise HTTPException(status_code=404, detail="session not found")
+    _touch(sess)
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    with open(meta["docx_path"], "rb") as f:
+        docx_bytes = f.read()
+    styled_html = _build_styled_html(docx_bytes, template)
+    return {"html": styled_html}
 
 
 @app.post("/preview/batch")

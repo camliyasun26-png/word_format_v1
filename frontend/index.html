@@ -366,48 +366,35 @@ function annotateMediaNotes(rootId) {
 }
 
 async function refreshPreview() {
-  if (!paragraphs.length) return;
+  if (!paragraphs.length || !currentDocId) return;
+  const frame = document.getElementById("preview-frame");
   try {
-    const items = [];
-    const plan = paragraphs.map(p => {
-      if (p.is_split && p.split_title && p.split_body) {
-        const a = items.push({ text: p.split_title || "", level: p.detected_level || "Body" }) - 1;
-        const b = items.push({ text: p.split_body || "", level: "Body" }) - 1;
-        return { kind: "split", a, b };
-      }
-      const a = items.push({ text: p.original_text || "", level: p.detected_level || "Body" }) - 1;
-      return { kind: "single", a };
-    });
-    const resp = await fetch("/preview/batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, template: currentTemplate })
-    });
+    setStatus("格式化预览渲染中...");
+    const fd = new FormData();
+    fd.append("doc_id", currentDocId);
+    fd.append("template", currentTemplate);
+    const resp = await fetch("/preview/full-html", { method: "POST", body: fd });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => resp.status);
       throw new Error("HTTP " + resp.status + ": " + errText);
     }
-    const { htmls } = await resp.json();
-    const parts = plan.map((slot, idx) => {
-      const inner = slot.kind === "split"
-        ? (htmls[slot.a] || "") + "\n" + (htmls[slot.b] || "")
-        : (htmls[slot.a] || "");
-      return `<div class="para-slot" data-para-idx="${idx}">${inner}</div>`;
-    });
-    const frame = document.getElementById("preview-frame");
-    frame.innerHTML = parts.join("\n");
-    insertMediaPlaceholders(frame);
+    const { html } = await resp.json();
+    frame.innerHTML = html || "";
     buildPreviewNav();
     renderKatex(frame);
+    setStatus("格式化预览已就绪");
   } catch (e) {
     console.error("refreshPreview failed:", e);
     setStatus("格式化预览渲染失败: " + e.message);
-    document.getElementById("preview-frame").innerHTML =
-      `<div style="color:#d32f2f;padding:16px">格式化预览渲染失败: ${escapeHtml(String(e && e.message || e))}</div>`;
+    frame.innerHTML = `<div style="color:#d32f2f;padding:16px">格式化预览渲染失败: ${escapeHtml(String(e && e.message || e))}</div>`;
   }
 }
 
 function insertMediaPlaceholders(frame) {
+  // 格式化预览克隆自原文 HTML，已含真实图片/表格，无需插入占位符
+  // 降级方案（fallback）使用 .para-slot，新方案直接跳过
+  if (!frame.querySelector(".para-slot")) return;
+
   const grouped = {};
   for (const a of mediaAnchors) {
     if (!grouped[a.after_para_index]) grouped[a.after_para_index] = [];
@@ -498,7 +485,9 @@ function buildPreviewNav() {
     item.title = `${p.detected_level}  ${text}`;
     styleNavItem(item, p.detected_level);
     item.addEventListener("click", () => {
-      const target = document.querySelector(`#preview-frame .para-slot[data-para-idx="${i}"]`);
+      // 新方案：p[data-para-idx]；降级方案：.para-slot[data-para-idx]
+      const target = document.querySelector(`#preview-frame p[data-para-idx="${i}"]`)
+                  || document.querySelector(`#preview-frame .para-slot[data-para-idx="${i}"]`);
       if (!target) return;
       target.scrollIntoView({ behavior: "smooth", block: "start" });
       const prev = target.style.background;
